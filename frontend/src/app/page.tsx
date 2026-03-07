@@ -10,6 +10,7 @@ import {
   QueryResponse,
   createKnowledgeSpace,
   getIngestionJob,
+  listDatasources,
   listKnowledgeSpaces,
   registerCSV,
   registerSQLite,
@@ -17,6 +18,13 @@ import {
   runQueryStream,
 } from "@/lib/api";
 import { ChatMessage, ChatSession } from "@/lib/chat-types";
+
+function getKnowledgeSpaceDisplayName(name: string): string {
+  if (name === "test_new") {
+    return "Manufacturing Alarms";
+  }
+  return name;
+}
 
 function makeId() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
@@ -29,14 +37,14 @@ function getMessagePreview(text: string) {
   return text.length > 44 ? `${text.slice(0, 44)}...` : text;
 }
 
-function createChat(): ChatSession {
+function createChat(defaultDatasource: DataSourceInfo | null = null): ChatSession {
   const now = new Date().toISOString();
   return {
     id: makeId(),
     title: "New chat",
     createdAt: now,
     updatedAt: now,
-    datasource: null,
+    datasource: defaultDatasource,
     knowledgeSpaceId: null,
     knowledgeSpaceName: null,
     ingestionStatus: null,
@@ -55,13 +63,16 @@ function updateChatById(
 }
 
 export default function HomePage() {
+  const [defaultDatasource, setDefaultDatasource] = useState<DataSourceInfo | null>(
+    null
+  );
   const [initialChat] = useState<ChatSession>(() => createChat());
   const [chats, setChats] = useState<ChatSession[]>(() => [initialChat]);
   const [activeChatId, setActiveChatId] = useState<string | null>(
     () => initialChat.id
   );
   const [draft, setDraft] = useState("");
-  const [visualizeResults, setVisualizeResults] = useState(false);
+  const [visualizeResults, setVisualizeResults] = useState(true);
   const [knowledgeSpaces, setKnowledgeSpaces] = useState<KnowledgeSpaceInfo[]>([]);
 
   const activeChat = useMemo(
@@ -75,6 +86,30 @@ export default function HomePage() {
       .then((spaces) => {
         if (!isActive) return;
         setKnowledgeSpaces(spaces);
+      })
+      .catch(() => undefined);
+
+    listDatasources()
+      .then((datasources) => {
+        if (!isActive) return;
+        const fallback =
+          datasources.find((source) => source.id === "default-sqlite") ??
+          datasources[0] ??
+          null;
+        if (!fallback) return;
+        setDefaultDatasource(fallback);
+        const now = new Date().toISOString();
+        setChats((prev) =>
+          prev.map((chat) =>
+            chat.datasource
+              ? chat
+              : {
+                  ...chat,
+                  datasource: fallback,
+                  updatedAt: now,
+                }
+          )
+        );
       })
       .catch(() => undefined);
     return () => {
@@ -91,7 +126,7 @@ export default function HomePage() {
         return {
           ...chat,
           knowledgeSpaceId: defaultSpace.id,
-          knowledgeSpaceName: defaultSpace.name,
+          knowledgeSpaceName: getKnowledgeSpaceDisplayName(defaultSpace.name),
           updatedAt: new Date().toISOString(),
         };
       })
@@ -117,17 +152,17 @@ export default function HomePage() {
   };
 
   const handleCreateChat = () => {
-    const next = createChat();
+    const next = createChat(defaultDatasource);
     setChats((prev) => [next, ...prev]);
     setActiveChatId(next.id);
     setDraft("");
-    setVisualizeResults(false);
+    setVisualizeResults(true);
   };
 
   const handleSelectChat = (chatId: string) => {
     setActiveChatId(chatId);
     setDraft("");
-    setVisualizeResults(false);
+    setVisualizeResults(true);
   };
 
   const setActiveChatLoading = (loading: boolean) => {
@@ -185,7 +220,9 @@ export default function HomePage() {
       updateChatById(prev, activeChatId, (chat) => ({
         ...chat,
         knowledgeSpaceId: spaceId || null,
-        knowledgeSpaceName: picked?.name ?? null,
+        knowledgeSpaceName: picked
+          ? getKnowledgeSpaceDisplayName(picked.name)
+          : null,
         updatedAt: now,
       }))
     );
@@ -201,7 +238,7 @@ export default function HomePage() {
         updateChatById(prev, activeChatId, (chat) => ({
           ...chat,
           knowledgeSpaceId: created.id,
-          knowledgeSpaceName: created.name,
+          knowledgeSpaceName: getKnowledgeSpaceDisplayName(created.name),
           updatedAt: now,
         }))
       );
@@ -268,12 +305,11 @@ export default function HomePage() {
     }
   };
 
-  const handleSend = async () => {
+  const sendQuestion = async (
+    question: string,
+    includeVisualization: boolean
+  ) => {
     if (!activeChatId || !activeChat) return;
-
-    const question = draft.trim();
-    if (!question) return;
-
     if (!activeChat.datasource) {
       setChats((prev) =>
         updateChatById(prev, activeChatId, (chat) => ({
@@ -283,10 +319,6 @@ export default function HomePage() {
       );
       return;
     }
-
-    const includeVisualization = visualizeResults;
-    setDraft("");
-    setVisualizeResults(false);
 
     const now = new Date().toISOString();
     const userMessage: ChatMessage = {
@@ -307,9 +339,10 @@ export default function HomePage() {
       }))
     );
 
+    let assistantMessageId: string | null = null;
     try {
       const responseTime = new Date().toISOString();
-      const assistantMessageId = makeId();
+      assistantMessageId = makeId();
       const initialResult: QueryResponse = {
         status: "progress",
         step: "schema",
@@ -392,6 +425,9 @@ export default function HomePage() {
           isLoading: false,
           error: message,
           updatedAt: errorTime,
+          messages: assistantMessageId
+            ? chat.messages.filter((msg) => msg.id !== assistantMessageId)
+            : chat.messages,
         }))
       );
 
@@ -408,6 +444,20 @@ export default function HomePage() {
         );
       }
     }
+  };
+
+  const handleSend = async () => {
+    const question = draft.trim();
+    if (!question) return;
+    setDraft("");
+    setVisualizeResults(true);
+    await sendQuestion(question, visualizeResults);
+  };
+
+  const handleRunStarter = async (question: string) => {
+    setDraft("");
+    setVisualizeResults(true);
+    await sendQuestion(question, true);
   };
 
   return (
@@ -432,6 +482,7 @@ export default function HomePage() {
           onSelectKnowledgeSpace={handleSelectKnowledgeSpace}
           onCreateKnowledgeSpace={handleCreateKnowledgeSpace}
           onUploadKnowledgeDoc={handleUploadKnowledgeDoc}
+          onRunStarter={handleRunStarter}
         />
       ) : (
         <section className="chat-main empty">

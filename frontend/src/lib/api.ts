@@ -58,6 +58,7 @@ export type QueryResponse = {
     relation: string;
     object: string;
   }>;
+  follow_up_questions?: string[];
   error?: string | null;
 };
 
@@ -90,6 +91,14 @@ export async function registerCSV(file: File): Promise<DataSourceInfo> {
   return response.json();
 }
 
+export async function listDatasources(): Promise<DataSourceInfo[]> {
+  const response = await fetch(`${API_BASE}/datasources`);
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
 export async function* runQueryStream(
   datasourceId: string,
   question: string,
@@ -108,7 +117,13 @@ export async function* runQueryStream(
     }),
   });
   if (!response.ok) {
-    throw new Error(await response.text());
+    const raw = await response.text();
+    try {
+      const parsed = JSON.parse(raw) as { detail?: string };
+      throw new Error(parsed.detail || raw);
+    } catch {
+      throw new Error(raw);
+    }
   }
 
   const contentType = response.headers.get("content-type") ?? "";
