@@ -12,7 +12,7 @@ from langchain_community.utilities import SQLDatabase
 from openai import APIConnectionError, APITimeoutError, OpenAI, RateLimitError
 
 from core.data_sources.base import DataSource
-from text_2_sql_agentic import MANUFACTURING_KNOWLEDGE_GRAPH
+from core.knowledge.context import get_context_from_neo4j
 
 try:
     from langchain_community.agent_toolkits.sql.base import create_sql_agent
@@ -23,11 +23,17 @@ load_dotenv()
 _executor_cache: Dict[Tuple[str, str], Any] = {}
 SQL_GEN_TIMEOUT_SECONDS = float(os.environ.get("SQL_GEN_TIMEOUT_SECONDS", "45"))
 SQL_RUN_TIMEOUT_SECONDS = float(os.environ.get("SQL_RUN_TIMEOUT_SECONDS", "20"))
-POSTPROCESS_TIMEOUT_SECONDS = float(os.environ.get("POSTPROCESS_TIMEOUT_SECONDS", "35"))
+POSTPROCESS_TIMEOUT_SECONDS = float(os.environ.get("POSTPROCESS_TIMEOUT_SECONDS", "60"))
+SUMMARY_MODEL = os.environ.get("SUMMARY_MODEL", "gpt-4o-mini")
 
 
 def _get_openai_client() -> OpenAI:
     return OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+
+
+def _log(message: str) -> None:
+    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[reactive-agent] {ts} {message}", flush=True)
 
 
 def _chat_completion_with_retry(
@@ -43,13 +49,20 @@ def _chat_completion_with_retry(
     last_error: Optional[Exception] = None
     for attempt in range(retries):
         try:
+            start = time.perf_counter()
             kwargs: Dict[str, Any] = {"model": model, "messages": messages}
             if response_format is not None:
                 kwargs["response_format"] = response_format
             kwargs["timeout"] = timeout_seconds
-            return client.chat.completions.create(**kwargs)
+            response = client.chat.completions.create(**kwargs)
+            elapsed = time.perf_counter() - start
+            _log(f"OpenAI call success model={model} attempt={attempt + 1} elapsed={elapsed:.2f}s")
+            return response
         except (APIConnectionError, APITimeoutError, RateLimitError) as exc:
             last_error = exc
+            _log(
+                f"OpenAI call retry model={model} attempt={attempt + 1}/{retries} error={type(exc).__name__}: {exc}"
+            )
             if attempt == retries - 1:
                 break
             time.sleep(backoff_seconds * (2**attempt))
@@ -219,7 +232,9 @@ def _generate_chart_suggestion(
     columns: List[str],
     rows: List[List[Any]],
 ) -> Dict[str, Any]:
+    chart_start = time.perf_counter()
     if not rows or not columns:
+        _log("Chart suggestion skipped: no rows or columns.")
         return {
             "chart_type": "table",
             "x_field": None,
@@ -257,6 +272,8 @@ def _generate_chart_suggestion(
             response_format={"type": "json_object"},
         )
     except Exception:
+        elapsed = time.perf_counter() - chart_start
+        _log(f"Chart suggestion fallback due to connectivity/issues after {elapsed:.2f}s")
         return {
             "chart_type": "table",
             "x_field": None,
@@ -272,6 +289,8 @@ def _generate_chart_suggestion(
 
     allowed_types = {"bar", "stacked_bar", "line", "donut", "table"}
     if suggestion.get("chart_type") not in allowed_types:
+        elapsed = time.perf_counter() - chart_start
+        _log(f"Chart suggestion invalid output; fallback to table after {elapsed:.2f}s")
         return {
             "chart_type": "table",
             "x_field": None,
@@ -280,6 +299,8 @@ def _generate_chart_suggestion(
             "rationale": "Fallback to table due to invalid chart type.",
         }
 
+    elapsed = time.perf_counter() - chart_start
+    _log(f"Chart suggestion ready chart_type={suggestion.get('chart_type')} elapsed={elapsed:.2f}s")
     return suggestion
 
 
@@ -288,12 +309,31 @@ def _summarize_result(
     sql_query: str,
     columns: List[str],
     rows: List[List[Any]],
+    knowledge_space_id: str | None = None,
+    kg_context: Dict[str, Any] | None = None,
 ) -> str:
+    summary_start = time.perf_counter()
     if not rows or not columns:
+        _log("Summary skipped: no rows or columns.")
         return (
             "I ran the query, but it returned no rows. "
             "Try broadening filters, checking date ranges, or asking for top-level aggregates."
         )
+
+    if kg_context is None:
+        kg_context = get_context_from_neo4j(question, columns, rows, knowledge_space_id)
+    relations = (kg_context.get("relations") or [])[:24]
+    # Chunk KG relations so prompt size stays bounded on larger graphs.
+    relation_chunks = [relations[i : i + 6] for i in range(0, len(relations), 6)]
+    selected_chunks = relation_chunks[:2]
+    compact_kg_lines: List[str] = []
+    for chunk_index, chunk in enumerate(selected_chunks, start=1):
+        compact_kg_lines.append(f"Chunk {chunk_index}:")
+        for item in chunk:
+            compact_kg_lines.append(
+                f"- {item.get('subject', '')} -> {item.get('relation', '')} -> {item.get('object', '')}"
+            )
+    compact_kg_text = "\n".join(compact_kg_lines) if compact_kg_lines else "No KG relations."
 
     system_prefix = (
         "You are a senior reliability engineer reviewing plant alarm data. "
@@ -304,37 +344,39 @@ def _summarize_result(
         "Keep it tight and decision-oriented."
     )
 
-    template = f"""
-    Knowledge Graph (JSON):
-    {json.dumps(MANUFACTURING_KNOWLEDGE_GRAPH, indent=2)}
-
-    User question: {question}
-
-    SQL used: {sql_query}
-    Columns: {columns}
-    Row count: {len(rows)}
-    Sample rows: {rows[:10]}
-
-    Write 3-5 concise insights (max 2 sentences each).
-    Only include findings that would matter in an operations meeting.
-    Skip obvious restatements.
-    Do not mention the knowledge graph.
-    """
+    compact_columns = columns[:8]
+    sample_rows = rows[:3]
+    template = (
+        f"Question: {question}\n"
+        f"Columns: {compact_columns}\n"
+        f"Row count: {len(rows)}\n"
+        f"Sample rows: {sample_rows}\n"
+        f"KG relations:\n{compact_kg_text}\n\n"
+        "Write 3 concise, action-oriented insights. "
+        "Ground insights in returned rows first, then KG if relevant. "
+        "Do not mention the knowledge graph."
+    )
 
     try:
         completion = _chat_completion_with_retry(
-            model="gpt-5-mini",
+            model=SUMMARY_MODEL,
             messages=[
                 {"role": "developer", "content": system_prefix},
                 {"role": "user", "content": template},
             ],
+            retries=1,
+            timeout_seconds=18,
         )
         summary = (completion.choices[0].message.content or "").strip()
+        elapsed = time.perf_counter() - summary_start
+        _log(f"Summary generation completed elapsed={elapsed:.2f}s")
         return (
             summary
             or "Results are available in the table and chart. Ask a follow-up for deeper analysis."
         )
     except Exception:
+        elapsed = time.perf_counter() - summary_start
+        _log(f"Summary generation failed after {elapsed:.2f}s")
         return "Results are available in the table. Summary generation temporarily failed due to network issues."
 
 
@@ -342,13 +384,17 @@ async def run_agent(
     question: str,
     datasource: DataSource,
     include_visualization: bool = True,
+    knowledge_space_id: str | None = None,
 ) -> AsyncGenerator[Dict[str, Any], None]:
+    request_start = time.perf_counter()
+    _log("run_agent start")
     yield {
         "status": "progress",
         "step": "schema",
         "message": "Reading schema",
     }
     schema = await asyncio.to_thread(datasource.get_schema)
+    _log(f"Schema loaded elapsed={time.perf_counter() - request_start:.2f}s")
     yield {
         "status": "progress",
         "step": "sql",
@@ -359,7 +405,9 @@ async def run_agent(
             asyncio.to_thread(_build_reactive_sql, question, datasource),
             timeout=SQL_GEN_TIMEOUT_SECONDS,
         )
+        _log(f"SQL generated elapsed={time.perf_counter() - request_start:.2f}s")
     except asyncio.TimeoutError:
+        _log("SQL generation timeout")
         yield {
             "status": "partial",
             "sql_query": "",
@@ -397,7 +445,9 @@ async def run_agent(
             asyncio.to_thread(_run_sql_with_retry, question, datasource, sql_query, False),
             timeout=SQL_RUN_TIMEOUT_SECONDS,
         )
+        _log(f"SQL execution completed elapsed={time.perf_counter() - request_start:.2f}s")
     except asyncio.TimeoutError:
+        _log("SQL execution timeout")
         sql_result = {
             "sql_query": sql_query,
             "columns": [],
@@ -424,8 +474,27 @@ async def run_agent(
         "message": "Generating chart and insights",
     }
 
+    postprocess_start = time.perf_counter()
+    _log("Postprocess started: fetching KG context")
+    kg_context = await asyncio.to_thread(
+        get_context_from_neo4j, question, columns, rows, knowledge_space_id
+    )
+    _log(
+        "KG context fetched "
+        f"relations={len(kg_context.get('relations', []))} "
+        f"elapsed={time.perf_counter() - postprocess_start:.2f}s"
+    )
+    knowledge_relations = (kg_context.get("relations") or [])[:12]
+
+    _log("Postprocess started: launching summary/chart tasks")
     summary_task = asyncio.to_thread(
-        _summarize_result, question, final_sql, columns, rows
+        _summarize_result,
+        question,
+        final_sql,
+        columns,
+        rows,
+        knowledge_space_id,
+        kg_context,
     )
 
     if include_visualization:
@@ -449,7 +518,12 @@ async def run_agent(
             asyncio.gather(summary_task, chart_task),
             timeout=POSTPROCESS_TIMEOUT_SECONDS,
         )
+        _log(f"Postprocess finished elapsed={time.perf_counter() - postprocess_start:.2f}s")
     except asyncio.TimeoutError:
+        _log(
+            "Postprocess timeout "
+            f"limit={POSTPROCESS_TIMEOUT_SECONDS}s elapsed={time.perf_counter() - postprocess_start:.2f}s"
+        )
         summary_text = (
             "Base query results are ready. Extra insight generation timed out."
         )
@@ -468,8 +542,10 @@ async def run_agent(
         "rows": rows,
         "chart_suggestion": chart_suggestion,
         "summary_text": summary_text,
+        "knowledge_relations": knowledge_relations,
         "error": error,
     }
+    _log(f"run_agent complete total_elapsed={time.perf_counter() - request_start:.2f}s")
 
 
 async def get_results(chunks: AsyncGenerator[Dict[str, Any], None]) -> Dict[str, Any]:
@@ -483,7 +559,15 @@ def run_reactive_agent(
     question: str,
     datasource: DataSource,
     include_visualization: bool = True,
+    knowledge_space_id: str | None = None,
 ) -> Dict[str, Any]:
     return asyncio.run(
-        get_results(run_agent(question, datasource, include_visualization=include_visualization))
+        get_results(
+            run_agent(
+                question,
+                datasource,
+                include_visualization=include_visualization,
+                knowledge_space_id=knowledge_space_id,
+            )
+        )
     )

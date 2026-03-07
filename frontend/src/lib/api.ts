@@ -4,6 +4,38 @@ export type DataSourceInfo = {
   name: string;
 };
 
+export type KnowledgeSpaceInfo = {
+  id: string;
+  name: string;
+  created_at: string;
+};
+
+export type DocumentInfo = {
+  id: string;
+  space_id: string;
+  filename: string;
+  content_type?: string | null;
+  status: "uploaded" | "processing" | "completed" | "failed";
+  created_at: string;
+};
+
+export type IngestionJobInfo = {
+  id: string;
+  space_id: string;
+  document_id: string;
+  status: "queued" | "processing" | "completed" | "failed";
+  stage: string;
+  progress: number;
+  error?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DocumentUploadResponse = {
+  document: DocumentInfo;
+  job: IngestionJobInfo;
+};
+
 export type ChartSuggestion = {
   chart_type: "bar" | "stacked_bar" | "line" | "donut" | "table";
   x_field?: string | null;
@@ -21,6 +53,11 @@ export type QueryResponse = {
   rows: Array<Array<unknown>>;
   chart_suggestion?: ChartSuggestion;
   summary_text?: string;
+  knowledge_relations?: Array<{
+    subject: string;
+    relation: string;
+    object: string;
+  }>;
   error?: string | null;
 };
 
@@ -56,7 +93,8 @@ export async function registerCSV(file: File): Promise<DataSourceInfo> {
 export async function* runQueryStream(
   datasourceId: string,
   question: string,
-  includeVisualization = true
+  includeVisualization = true,
+  knowledgeSpaceId?: string | null
 ): AsyncGenerator<QueryResponse, void, unknown> {
   const response = await fetch(`${API_BASE}/query`, {
     method: "POST",
@@ -66,6 +104,7 @@ export async function* runQueryStream(
       question,
       include_visualization: includeVisualization,
       agent_mode: "reactive",
+      knowledge_space_id: knowledgeSpaceId ?? null,
     }),
   });
   if (!response.ok) {
@@ -107,7 +146,8 @@ export async function* runQueryStream(
 export async function runQuery(
   datasourceId: string,
   question: string,
-  includeVisualization = true
+  includeVisualization = true,
+  knowledgeSpaceId?: string | null
 ): Promise<QueryResponse> {
   let merged: QueryResponse = {
     status: "partial",
@@ -128,10 +168,57 @@ export async function runQuery(
   for await (const chunk of runQueryStream(
     datasourceId,
     question,
-    includeVisualization
+    includeVisualization,
+    knowledgeSpaceId
   )) {
     merged = { ...merged, ...chunk };
   }
 
   return merged;
+}
+
+export async function createKnowledgeSpace(
+  name: string
+): Promise<KnowledgeSpaceInfo> {
+  const response = await fetch(`${API_BASE}/knowledge-spaces`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function listKnowledgeSpaces(): Promise<KnowledgeSpaceInfo[]> {
+  const response = await fetch(`${API_BASE}/knowledge-spaces`);
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function uploadKnowledgeDocument(
+  spaceId: string,
+  file: File
+): Promise<DocumentUploadResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await fetch(`${API_BASE}/knowledge-spaces/${spaceId}/documents`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function getIngestionJob(jobId: string): Promise<IngestionJobInfo> {
+  const response = await fetch(`${API_BASE}/ingestion-jobs/${jobId}`);
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
 }

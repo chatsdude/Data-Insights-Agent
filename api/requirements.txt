@@ -8,3 +8,6 @@ langgraph
 langchain-openai
 openai
 python-dotenv
+neo4j
+pypdf
+spacy
