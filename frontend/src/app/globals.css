@@ -190,6 +190,27 @@ textarea {
   margin-bottom: 4px;
 }
 
+.datasource-tag-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.datasource-plus {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid #415a8f;
+  background: #1a2b4f;
+  color: #dce8ff;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .datasource-tag strong {
   font-size: 0.88rem;
   color: #e8efff;
@@ -401,6 +422,39 @@ button:disabled {
   color: var(--warn);
 }
 
+.starter-prompts {
+  margin: 0 22px 8px;
+  padding: 10px 12px;
+  border: 1px solid #2f4268;
+  border-radius: 12px;
+  background: linear-gradient(145deg, #101a33 0%, #12203d 100%);
+}
+
+.starter-prompts p {
+  margin: 0 0 8px;
+  font-size: 0.84rem;
+  color: #b7c8ea;
+}
+
+.starter-prompts-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.starter-prompts-grid button {
+  text-align: left;
+  border: 1px solid #3a5488;
+  border-radius: 10px;
+  background: rgba(29, 49, 88, 0.55);
+  color: #e7efff;
+  padding: 9px 11px;
+}
+
+.starter-prompts-grid button:hover:not(:disabled) {
+  border-color: #5f82c7;
+  background: rgba(42, 69, 121, 0.65);
+}
+
 .knowledge-setup {
   margin: 0 22px 10px;
   padding: 10px 12px;
@@ -409,6 +463,19 @@ button:disabled {
   background: rgba(15, 24, 45, 0.7);
   display: grid;
   gap: 10px;
+}
+
+.knowledge-help summary {
+  cursor: pointer;
+  color: #b7c7e9;
+  font-size: 0.84rem;
+}
+
+.knowledge-help p {
+  margin: 6px 0 0;
+  color: #9fb2d9;
+  font-size: 0.82rem;
+  line-height: 1.4;
 }
 
 .knowledge-setup-row {
@@ -430,6 +497,45 @@ button:disabled {
   color: var(--ink);
   border-radius: 8px;
   padding: 7px 8px;
+}
+
+.knowledge-space-create {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.knowledge-space-create input {
+  min-width: 240px;
+  border: 1px solid #2f436f;
+  background: #0b1223;
+  color: #eaf0ff;
+  border-radius: 9px;
+  padding: 8px 10px;
+}
+
+.knowledge-upload-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: 999px;
+  border: 1px solid #3f5d96;
+  background: linear-gradient(140deg, #17305f 0%, #214786 100%);
+  color: #e7f0ff;
+  font-weight: 600;
+  padding: 8px 13px;
+}
+
+.knowledge-upload-btn span {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  line-height: 1;
+  font-size: 0.95rem;
 }
 
 .thinking-card {

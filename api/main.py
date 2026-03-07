@@ -42,6 +42,15 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 REGISTRY_PATH = UPLOADS_DIR / "registry.json"
 KNOWLEDGE_DOCS_DIR = KNOWLEDGE_DIR / "docs"
 KNOWLEDGE_DOCS_DIR.mkdir(parents=True, exist_ok=True)
+DEFAULT_DATASOURCE_ID = "default-sqlite"
+DEFAULT_DATASOURCE_NAME = os.environ.get(
+    "DEFAULT_DATASOURCE_NAME", "loss-data.db (default)"
+)
+DEFAULT_SQLITE_PATH = Path(
+    os.environ.get(
+        "DEFAULT_SQLITE_PATH", str(BASE_DIR / "default_data" / "loss-data.db")
+    )
+)
 
 app = FastAPI(title="Text2SQL Agent API", version="0.1.0")
 
@@ -77,6 +86,7 @@ class QueryResponse(BaseModel):
     summary_text: str
     knowledge_relations: List[Dict[str, object]] = []
     status: str
+    follow_up_questions: List[str] = []
     error: str | None = None
 
 
@@ -96,6 +106,7 @@ def _now_iso() -> str:
 
 @app.on_event("startup")
 def on_startup() -> None:
+    _ensure_default_sqlite_datasource()
     should_flush = os.environ.get("KNOWLEDGE_FLUSH_ON_START", "false").lower() in {
         "1",
         "true",
@@ -121,6 +132,21 @@ def _load_registry() -> Dict[str, Dict[str, str]]:
 
 def _save_registry(registry: Dict[str, Dict[str, str]]) -> None:
     REGISTRY_PATH.write_text(json.dumps(registry, indent=2), encoding="utf-8")
+
+
+def _ensure_default_sqlite_datasource() -> None:
+    if not DEFAULT_SQLITE_PATH.exists():
+        print(f"Default datasource file not found: {DEFAULT_SQLITE_PATH}")
+        return
+
+    registry = _load_registry()
+    registry[DEFAULT_DATASOURCE_ID] = {
+        "type": "sqlite",
+        "path": str(DEFAULT_SQLITE_PATH),
+        "name": DEFAULT_DATASOURCE_NAME,
+    }
+    _save_registry(registry)
+    _rehydrate_datasource(DEFAULT_DATASOURCE_ID)
 
 
 def _rehydrate_datasource(datasource_id: str) -> object | None:
@@ -197,6 +223,7 @@ def register_csv_source(file: UploadFile = File(...)) -> DataSourceInfo:
 
 @app.get("/datasources", response_model=List[DataSourceInfo])
 def list_datasources() -> List[DataSourceInfo]:
+    _ensure_default_sqlite_datasource()
     registry = _load_registry()
     for datasource_id in registry:
         if datasource_id not in _datasource_meta:

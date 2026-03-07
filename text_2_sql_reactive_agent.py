@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
@@ -535,6 +536,8 @@ async def run_agent(
             "rationale": "Fallback to table because post-processing timed out.",
         }
 
+    follow_up_questions = get_next_questions(question, summary_text)
+
     yield {
         "status": "complete",
         "sql_query": final_sql,
@@ -543,6 +546,7 @@ async def run_agent(
         "chart_suggestion": chart_suggestion,
         "summary_text": summary_text,
         "knowledge_relations": knowledge_relations,
+        "follow_up_questions": follow_up_questions,
         "error": error,
     }
     _log(f"run_agent complete total_elapsed={time.perf_counter() - request_start:.2f}s")
@@ -571,3 +575,32 @@ def run_reactive_agent(
             )
         )
     )
+
+def get_next_questions(prev_question: str, prev_answer: str) -> List[str]:
+    prompt = (
+        "You are a helpful assistant for generating follow-up questions based on a previous question and its answer. "
+        "Given the previous question and insights generated, suggest 3 likely follow-up question that dig deeper or explore related aspects. "
+        "The follow-up questions should be relevant to the original topic and encourage further exploration." \
+        "However, the questions should be simple and not too complicated. Avoid asking too many things in a single question."
+    )
+    completion = _chat_completion_with_retry(
+        model="gpt-5-mini",
+        messages=[
+            {"role": "developer", "content": prompt},
+            {"role": "user", "content": f"Previous Question: {prev_question}\nAnswer: {prev_answer}\n3 Follow-up Questions:"},
+        ],
+        timeout_seconds=15,
+    )
+    raw_content = completion.choices[0].message.content or ""
+    lines = [line.strip() for line in raw_content.split("\n") if line.strip()]
+    follow_up = [
+        re.sub(r"^\d+[\).\-\s]*", "", line).lstrip("- ").strip()
+        for line in lines
+    ]
+    follow_up = [line for line in follow_up if line][:3]
+    return follow_up if follow_up else [
+        "Show me top 10 error codes in the dataset.",
+        "Show me top 10 error codes by category. Visualize the results as a pie chart.",
+        "How do error code frequencies change over time? Show a line chart with trends.",
+    ]
+
