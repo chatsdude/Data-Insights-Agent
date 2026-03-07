@@ -21,6 +21,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
     const isWorking = result.status !== "complete";
     const isPartial = result.status === "partial";
     const shouldStream = !streamedSummaryMessageIds.has(message.id);
+    const knowledgeRelations = result.knowledge_relations ?? [];
 
     return (
       <article className={bubbleClass}>
@@ -61,6 +62,18 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           <details className="assistant-details" open>
             <summary>SQL</summary>
             <code className="sql">{result.sql_query || "Generating query..."}</code>
+          </details>
+        )}
+        {!isWorking && (
+          <details className="assistant-details">
+            <summary>Sources (KG relations: {knowledgeRelations.length})</summary>
+            <code className="sql">
+              {knowledgeRelations.length > 0
+                ? knowledgeRelations
+                    .map((item) => `${item.subject} -[${item.relation}]-> ${item.object}`)
+                    .join("\n")
+                : "No knowledge-graph relations were retrieved for this question."}
+            </code>
           </details>
         )}
       </article>

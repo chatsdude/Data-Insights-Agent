@@ -401,6 +401,37 @@ button:disabled {
   color: var(--warn);
 }
 
+.knowledge-setup {
+  margin: 0 22px 10px;
+  padding: 10px 12px;
+  border: 1px solid #293554;
+  border-radius: 12px;
+  background: rgba(15, 24, 45, 0.7);
+  display: grid;
+  gap: 10px;
+}
+
+.knowledge-setup-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.knowledge-setup-row label,
+.knowledge-setup-row small {
+  color: #a8b9de;
+  font-size: 0.85rem;
+}
+
+.knowledge-setup-row select {
+  border: 1px solid #29314d;
+  background: #0b0f19;
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 7px 8px;
+}
+
 .thinking-card {
   margin-top: 10px;
   border: 1px solid #2f3e5f;

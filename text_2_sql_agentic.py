@@ -14,6 +14,7 @@ from typing_extensions import TypedDict
 from dotenv import load_dotenv
 
 from core.data_sources.base import DataSource
+from core.knowledge.context import get_context_from_neo4j
 
 load_dotenv()
 
@@ -135,6 +136,7 @@ class InputState(TypedDict):
     visualize_enabled: bool
     chart_suggestion: Dict[str, Any]
     summary_text: str
+    knowledge_space_id: Optional[str]
 
 class OutputState(TypedDict):
     sql_query: str
@@ -338,6 +340,7 @@ def summarize_result(state) -> dict:
     columns = state.get("columns", [])
     rows = state.get("rows", [])
     chart_suggestion = state.get("chart_suggestion", {})
+    knowledge_space_id = state.get("knowledge_space_id")
 
     if not rows or not columns:
         return {
@@ -350,6 +353,8 @@ def summarize_result(state) -> dict:
     sample_rows = rows[:10]
     chart_type = chart_suggestion.get("chart_type", "table")
 
+    kg_context = get_context_from_neo4j(question, knowledge_space_id)
+
     system_prefix = (
     "You are a senior reliability engineer reviewing plant alarm data. "
     "Write sharp, concise operational insights. "
@@ -361,7 +366,7 @@ def summarize_result(state) -> dict:
 
     template = f"""
     Knowledge Graph (JSON):
-    {json.dumps(MANUFACTURING_KNOWLEDGE_GRAPH, indent=2)}
+    {json.dumps(kg_context, indent=2)}
 
     User question: {question}
 
@@ -447,6 +452,7 @@ def run_agent(
     question: str,
     datasource: DataSource,
     include_visualization: bool = True,
+    knowledge_space_id: Optional[str] = None,
 ) -> OutputState:
     global _compiled_workflow
     if _compiled_workflow is None:
@@ -469,6 +475,7 @@ def run_agent(
                 else "No chart selected yet."
             ),
         },
+        "knowledge_space_id": knowledge_space_id,
     }
 
     result = _compiled_workflow.invoke(state)

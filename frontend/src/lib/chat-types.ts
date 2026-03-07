@@ -16,6 +16,9 @@ export type ChatSession = {
   createdAt: string;
   updatedAt: string;
   datasource: DataSourceInfo | null;
+  knowledgeSpaceId?: string | null;
+  knowledgeSpaceName?: string | null;
+  ingestionStatus?: string | null;
   messages: ChatMessage[];
   isLoading: boolean;
   error: string | null;
