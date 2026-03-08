@@ -42,6 +42,7 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 REGISTRY_PATH = UPLOADS_DIR / "registry.json"
 KNOWLEDGE_DOCS_DIR = KNOWLEDGE_DIR / "docs"
 KNOWLEDGE_DOCS_DIR.mkdir(parents=True, exist_ok=True)
+DEFAULT_SPACES_PATH = BASE_DIR / "default_data" / "spaces.json"
 DEFAULT_DATASOURCE_ID = "default-sqlite"
 DEFAULT_DATASOURCE_NAME = os.environ.get(
     "DEFAULT_DATASOURCE_NAME", "loss-data.db (default)"
@@ -107,6 +108,7 @@ def _now_iso() -> str:
 @app.on_event("startup")
 def on_startup() -> None:
     _ensure_default_sqlite_datasource()
+    _ensure_default_knowledge_spaces()
     should_flush = os.environ.get("KNOWLEDGE_FLUSH_ON_START", "false").lower() in {
         "1",
         "true",
@@ -147,6 +149,23 @@ def _ensure_default_sqlite_datasource() -> None:
     }
     _save_registry(registry)
     _rehydrate_datasource(DEFAULT_DATASOURCE_ID)
+
+
+def _ensure_default_knowledge_spaces() -> None:
+    if load_spaces():
+        return
+    if not DEFAULT_SPACES_PATH.exists():
+        print(f"Default knowledge spaces file not found: {DEFAULT_SPACES_PATH}")
+        return
+    try:
+        payload = json.loads(DEFAULT_SPACES_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        print(f"Default knowledge spaces file is invalid JSON: {DEFAULT_SPACES_PATH}")
+        return
+    if not isinstance(payload, dict):
+        print(f"Default knowledge spaces payload must be an object: {DEFAULT_SPACES_PATH}")
+        return
+    save_spaces(payload)
 
 
 def _rehydrate_datasource(datasource_id: str) -> object | None:
@@ -257,6 +276,7 @@ def create_knowledge_space(payload: KnowledgeSpaceCreate) -> KnowledgeSpaceInfo:
 
 @app.get("/knowledge-spaces", response_model=List[KnowledgeSpaceInfo])
 def list_knowledge_spaces() -> List[KnowledgeSpaceInfo]:
+    _ensure_default_knowledge_spaces()
     return [KnowledgeSpaceInfo(**item) for item in load_spaces().values()]
 
 

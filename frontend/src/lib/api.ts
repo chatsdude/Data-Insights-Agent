@@ -63,7 +63,7 @@ export type QueryResponse = {
 };
 
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "https://data-insights-agent-production.up.railway.app";
 
 export async function registerSQLite(file: File): Promise<DataSourceInfo> {
   const formData = new FormData();
