@@ -55,7 +55,7 @@ DEFAULT_SQLITE_PATH = Path(
 
 app = FastAPI(title="Text2SQL Agent API", version="0.1.0")
 
-origins = os.environ.get("FASTAPI_ALLOW_ORIGINS", "https://data-insights-agent-fz6i.vercel.app/").split(",")
+origins = os.environ.get("FASTAPI_ALLOW_ORIGINS", "https://data-insights-agent-fz6i.vercel.app").split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in origins],
