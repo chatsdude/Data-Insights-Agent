@@ -58,7 +58,7 @@ app = FastAPI(title="Text2SQL Agent API", version="0.1.0")
 origins = os.environ.get("FASTAPI_ALLOW_ORIGINS", "https://data-insights-agent-fz6i.vercel.app").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[origin.strip() for origin in origins],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
